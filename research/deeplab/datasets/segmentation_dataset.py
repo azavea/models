@@ -111,8 +111,8 @@ _ADE20K_INFORMATION = DatasetDescriptor(
 
 _CUSTOM_INFORMATION = DatasetDescriptor(
     splits_to_sizes={
-        'train': int(os.environ.get('DL_CUSTOM_TRAIN') or 1000)
-        'validation': int(os.environ.get('DL_CUSTOM_VALIDATION') or 1000)
+        'train': int(os.environ.get('DL_CUSTOM_TRAIN') or 1000),
+        'validation': int(os.environ.get('DL_CUSTOM_VALIDATION') or 1000),
     },
     num_classes=int(os.environ.get('DL_CUSTOM_CLASSES') or 10),
     ignore_label=int(os.environ.get('DL_CUSTOM_IGNORE') or 0),
