@@ -810,9 +810,11 @@ def random_image_scale(image,
     image = tf.image.resize_images(
         image, [image_newysize, image_newxsize], align_corners=True)
     result.append(image)
-    if masks:
-      masks = tf.image.resize_nearest_neighbor(
-          masks, [image_newysize, image_newxsize], align_corners=True)
+    if masks is not None:
+      masks = tf.image.resize_images(
+          masks, [image_newysize, image_newxsize],
+          method=tf.image.ResizeMethod.NEAREST_NEIGHBOR,
+          align_corners=True)
       result.append(masks)
     return tuple(result)
 
@@ -2128,7 +2130,8 @@ def resize_to_range(image,
                     max_dimension=None,
                     method=tf.image.ResizeMethod.BILINEAR,
                     align_corners=False,
-                    pad_to_max_dimension=False):
+                    pad_to_max_dimension=False,
+                    per_channel_pad_value=(0, 0, 0)):
   """Resizes an image so its dimensions are within the provided value.
 
   The output size can be described by two cases:
@@ -2153,6 +2156,8 @@ def resize_to_range(image,
       so the resulting image is of the spatial size
       [max_dimension, max_dimension]. If masks are included they are padded
       similarly.
+    per_channel_pad_value: A tuple of per-channel scalar value to use for
+      padding. By default pads zeros.
 
   Returns:
     Note that the position of the resized_image_shape changes based on whether
@@ -2181,8 +2186,20 @@ def resize_to_range(image,
         image, new_size[:-1], method=method, align_corners=align_corners)
 
     if pad_to_max_dimension:
-      new_image = tf.image.pad_to_bounding_box(
-          new_image, 0, 0, max_dimension, max_dimension)
+      channels = tf.unstack(new_image, axis=2)
+      if len(channels) != len(per_channel_pad_value):
+        raise ValueError('Number of channels must be equal to the length of '
+                         'per-channel pad value.')
+      new_image = tf.stack(
+          [
+              tf.pad(
+                  channels[i], [[0, max_dimension - new_size[0]],
+                                [0, max_dimension - new_size[1]]],
+                  constant_values=per_channel_pad_value[i])
+              for i in range(len(channels))
+          ],
+          axis=2)
+      new_image.set_shape([max_dimension, max_dimension, 3])
 
     result = [new_image]
     if masks is not None:
@@ -2192,10 +2209,10 @@ def resize_to_range(image,
           new_size[:-1],
           method=tf.image.ResizeMethod.NEAREST_NEIGHBOR,
           align_corners=align_corners)
-      new_masks = tf.squeeze(new_masks, 3)
       if pad_to_max_dimension:
         new_masks = tf.image.pad_to_bounding_box(
             new_masks, 0, 0, max_dimension, max_dimension)
+      new_masks = tf.squeeze(new_masks, 3)
       result.append(new_masks)
 
     result.append(new_size)
@@ -2910,6 +2927,29 @@ def ssd_random_crop_pad_fixed_aspect_ratio(
   return result
 
 
+def convert_class_logits_to_softmax(multiclass_scores, temperature=1.0):
+  """Converts multiclass logits to softmax scores after applying temperature.
+
+  Args:
+    multiclass_scores: float32 tensor of shape
+      [num_instances, num_classes] representing the score for each box for each
+      class.
+    temperature: Scale factor to use prior to applying softmax. Larger
+      temperatures give more uniform distruibutions after softmax.
+
+  Returns:
+    multiclass_scores: float32 tensor of shape
+      [num_instances, num_classes] with scaling and softmax applied.
+  """
+
+  # Multiclass scores must be stored as logits. Apply temp and softmax.
+  multiclass_scores_scaled = tf.divide(
+      multiclass_scores, temperature, name='scale_logits')
+  multiclass_scores = tf.nn.softmax(multiclass_scores_scaled, name='softmax')
+
+  return multiclass_scores
+
+
 def get_default_func_arg_map(include_label_scores=False,
                              include_multiclass_scores=False,
                              include_instance_masks=False,
@@ -2931,7 +2971,8 @@ def get_default_func_arg_map(include_label_scores=False,
   """
   groundtruth_label_scores = None
   if include_label_scores:
-    groundtruth_label_scores = (fields.InputDataFields.groundtruth_label_scores)
+    groundtruth_label_scores = (
+        fields.InputDataFields.groundtruth_confidences)
 
   multiclass_scores = None
   if include_multiclass_scores:
@@ -2988,8 +3029,7 @@ def get_default_func_arg_map(include_label_scores=False,
       random_crop_pad_image: (fields.InputDataFields.image,
                               fields.InputDataFields.groundtruth_boxes,
                               fields.InputDataFields.groundtruth_classes,
-                              groundtruth_label_scores,
-                              multiclass_scores),
+                              groundtruth_label_scores, multiclass_scores),
       random_crop_to_aspect_ratio: (
           fields.InputDataFields.image,
           fields.InputDataFields.groundtruth_boxes,
@@ -3036,20 +3076,15 @@ def get_default_func_arg_map(include_label_scores=False,
       subtract_channel_mean: (fields.InputDataFields.image,),
       one_hot_encoding: (fields.InputDataFields.groundtruth_image_classes,),
       rgb_to_gray: (fields.InputDataFields.image,),
-      ssd_random_crop: (
-          fields.InputDataFields.image,
-          fields.InputDataFields.groundtruth_boxes,
-          fields.InputDataFields.groundtruth_classes,
-          groundtruth_label_scores,
-          multiclass_scores,
-          groundtruth_instance_masks,
-          groundtruth_keypoints
-      ),
+      ssd_random_crop: (fields.InputDataFields.image,
+                        fields.InputDataFields.groundtruth_boxes,
+                        fields.InputDataFields.groundtruth_classes,
+                        groundtruth_label_scores, multiclass_scores,
+                        groundtruth_instance_masks, groundtruth_keypoints),
       ssd_random_crop_pad: (fields.InputDataFields.image,
                             fields.InputDataFields.groundtruth_boxes,
                             fields.InputDataFields.groundtruth_classes,
-                            groundtruth_label_scores,
-                            multiclass_scores),
+                            groundtruth_label_scores, multiclass_scores),
       ssd_random_crop_fixed_aspect_ratio: (
           fields.InputDataFields.image,
           fields.InputDataFields.groundtruth_boxes,
@@ -3064,6 +3099,7 @@ def get_default_func_arg_map(include_label_scores=False,
           groundtruth_instance_masks,
           groundtruth_keypoints,
       ),
+      convert_class_logits_to_softmax: (multiclass_scores,),
   }
 
   return prep_func_arg_map
@@ -3121,7 +3157,7 @@ def preprocess(tensor_dict,
     images = tensor_dict[fields.InputDataFields.image]
     if len(images.get_shape()) != 4:
       raise ValueError('images in tensor_dict should be rank 4')
-    image = tf.squeeze(images, squeeze_dims=[0])
+    image = tf.squeeze(images, axis=0)
     tensor_dict[fields.InputDataFields.image] = image
 
   # Preprocess inputs based on preprocess_options

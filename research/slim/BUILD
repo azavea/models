@@ -80,7 +80,7 @@ py_binary(
     ],
 )
 
-py_binary(
+py_library(
     name = "cifar10",
     srcs = ["datasets/cifar10.py"],
     deps = [
@@ -89,7 +89,7 @@ py_binary(
     ],
 )
 
-py_binary(
+py_library(
     name = "flowers",
     srcs = ["datasets/flowers.py"],
     deps = [
@@ -98,7 +98,7 @@ py_binary(
     ],
 )
 
-py_binary(
+py_library(
     name = "imagenet",
     srcs = ["datasets/imagenet.py"],
     deps = [
@@ -107,7 +107,7 @@ py_binary(
     ],
 )
 
-py_binary(
+py_library(
     name = "mnist",
     srcs = ["datasets/mnist.py"],
     deps = [
@@ -694,10 +694,9 @@ py_test(
     ],
 )
 
-py_binary(
-    name = "train_image_classifier",
+py_library(
+    name = "train_image_classifier_lib",
     srcs = ["train_image_classifier.py"],
-    paropts = ["--compress"],
     deps = [
         ":dataset_factory",
         ":model_deploy",
@@ -708,13 +707,30 @@ py_binary(
 )
 
 py_binary(
-    name = "eval_image_classifier",
+    name = "train_image_classifier",
+    srcs = ["train_image_classifier.py"],
+    paropts = ["--compress"],
+    deps = [
+        ":train_image_classifier_lib",
+    ],
+)
+
+py_library(
+    name = "eval_image_classifier_lib",
     srcs = ["eval_image_classifier.py"],
     deps = [
         ":dataset_factory",
         ":nets_factory",
         ":preprocessing_factory",
         # "//tensorflow",
+    ],
+)
+
+py_binary(
+    name = "eval_image_classifier",
+    srcs = ["eval_image_classifier.py"],
+    deps = [
+        ":eval_image_classifier_lib",
     ],
 )
 
